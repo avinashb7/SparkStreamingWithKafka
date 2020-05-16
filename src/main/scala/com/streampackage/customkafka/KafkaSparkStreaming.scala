@@ -5,37 +5,72 @@ import com.typesafe.config.ConfigFactory
 import org.apache.spark.sql.SparkSession
 import org.apache.log4j.{BasicConfigurator, Level, Logger}
 import org.apache.spark.sql.streaming.Trigger
+import org.apache.spark.sql.functions.from_json
+import org.apache.spark.sql.functions.explode
+import org.apache.spark.sql.types.{ArrayType, DataType, IntegerType, LongType, StringType, StructField, StructType}
 
 object KafkaSparkStreaming {
 
   def main(args: Array[String]): Unit = {
-    val conf = ConfigFactory.load
 
-    // Create spark session.
+    val conf = ConfigFactory.load
     val spark = SparkSession
       .builder
       .appName("KafkaSparkStreamingApp")
       .getOrCreate()
 
-    setupLogging()
+    spark.sparkContext.setLogLevel("ERROR")
 
+    val schema = StructType(
+      List(
+        StructField("Countries", ArrayType(StructType(
+          Array(
+            StructField("Country",StringType),
+            StructField("CountryCode",StringType),
+            StructField("Date",StringType),
+            StructField("NewConfirmed",LongType),
+            StructField("NewDeaths",LongType),
+            StructField("NewRecovered",LongType),
+            StructField("Slug",StringType),
+            StructField("TotalConfirmed",LongType),
+            StructField("TotalDeaths",LongType),
+            StructField("TotalRecovered",LongType))
+          )
+        )),
+        StructField("Date", StringType, true),
+        StructField("Global",StringType,true)
+       /* StructField("Global",ArrayType(
+          StructType(
+            List(
+              StructField("NewConfirmed",LongType),
+              StructField("NewDeaths",LongType),
+              StructField("NewRecovered",LongType),
+              StructField("TotalConfirmed",LongType),
+              StructField("TotalDeaths",LongType),
+              StructField("TotalRecovered",LongType)
+
+            )
+          )
+        ))*/
+    ))
+
+    val df = spark.readStream
+      .option("multiLine", true)
+      .schema(schema)
+      .json(conf.getString("filePath"))
+
+    df.printSchema()
     import spark.implicits._
-    val lines = spark.readStream.format("kafka")
-      .option("kafka.bootstrap.servers",conf.getString("bootstrap.server"))
-      .option("subscribe",conf.getString("topic"))
-      .load().select('value cast "string")
 
-    val words = lines.as[String].flatMap(_.split(" "))
-    val wordCounts = words.groupBy("value").count()
+    val df1 = df.withColumn("Countries",explode($"Countries")).select("Countries.*")
 
-    // Start running the query that prints the running counts to the console
-    val query = wordCounts.writeStream
-      .outputMode("complete")
-      .format("console")
-      .trigger(Trigger.ProcessingTime("5 seconds"))
+    df1.writeStream
+      .format("parquet")
+      .outputMode("append")
+      .option("path", "/user/training/covid")
+      .option("checkpointLocation", "hdfs:///user/training/spark-checkpointing")
       .start()
-
-    query.awaitTermination()
+      .awaitTermination()
   }
 
 }
