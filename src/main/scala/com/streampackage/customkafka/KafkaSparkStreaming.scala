@@ -6,7 +6,7 @@ import org.apache.spark.sql.SparkSession
 import org.apache.log4j.{BasicConfigurator, Level, Logger}
 import org.apache.spark.sql.streaming.Trigger
 import org.apache.spark.sql.functions.from_json
-import org.apache.spark.sql.functions.explode
+import org.apache.spark.sql.functions.{explode,to_timestamp}
 import org.apache.spark.sql.types.{ArrayType, DataType, IntegerType, LongType, StringType, StructField, StructType}
 
 object KafkaSparkStreaming {
@@ -64,13 +64,22 @@ object KafkaSparkStreaming {
 
     val df1 = df.withColumn("Countries",explode($"Countries")).select("Countries.*")
 
-    df1.writeStream
+    val df2 = df1.withColumn("event_date",$"Date".cast("timestamp")).drop("Date")
+    df2.printSchema()
+    df2.writeStream
       .format("parquet")
       .outputMode("append")
       .option("path", "/user/training/covid")
       .option("checkpointLocation", "hdfs:///user/training/spark-checkpointing")
       .start()
       .awaitTermination()
+
+    //Enable below code to check the ouput on console.
+    /*df2.writeStream
+      .format("console")
+      .outputMode("append")
+      .start()
+      .awaitTermination()*/
   }
 
 }
